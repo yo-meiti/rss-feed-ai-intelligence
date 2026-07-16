@@ -1,0 +1,18 @@
+{
+  "name": "rss-feed-ai-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Workers RSS news intelligence pipeline with D1 and KV.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/worker.js --external:cloudflare --external:@cloudflare/workers-types --platform=node",
+    "dev": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.2025.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.105.0"
+  }
+}
