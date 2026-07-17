@@ -30,6 +30,30 @@ const FEEDS = [
     category: "dev",
   },
   {
+    name: "GitHub Blog",
+    url: "https://github.blog/feed/",
+    source: "GitHub",
+    category: "dev",
+  },
+  {
+    name: "Stack Overflow Blog",
+    url: "https://stackoverflow.blog/feed/",
+    source: "Stack Overflow",
+    category: "dev",
+  },
+  {
+    name: "AWS News Blog",
+    url: "https://aws.amazon.com/blogs/aws/feed/",
+    source: "AWS",
+    category: "dev",
+  },
+  {
+    name: "Hugging Face Blog",
+    url: "https://huggingface.co/blog/feed.xml",
+    source: "Hugging Face",
+    category: "ai",
+  },
+  {
     name: "Reddit Machine Learning",
     url: "https://www.reddit.com/r/MachineLearning/.rss",
     source: "Reddit",
@@ -46,6 +70,9 @@ const sourceScores = {
   arxiv: 8,
   reddit: 6,
   "dev.to": 5,
+  aws: 7,
+  "stack overflow": 7,
+  "hugging face": 6,
 };
 
 const topicBoost = {
@@ -102,6 +129,18 @@ function shouldIncludeInRss(score) {
   return score >= RSS_SCORE_THRESHOLD;
 }
 
+function decodeXmlValue(value) {
+  if (!value) return "";
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 function parseRssXml(xml) {
   const items = [];
   const itemRegex = /<item>([\s\S]*?)<\/item>/g;
@@ -109,17 +148,17 @@ function parseRssXml(xml) {
 
   while ((match = itemRegex.exec(xml)) !== null) {
     const itemContent = match[1];
-    const titleMatch = itemContent.match(/<title>([^<]*)<\/title>/);
-    const descriptionMatch = itemContent.match(/<description>([^<]*)<\/description>/);
-    const linkMatch = itemContent.match(/<link>([^<]*)<\/link>/);
-    const pubDateMatch = itemContent.match(/<pubDate>([^<]*)<\/pubDate>/);
-    const guidMatch = itemContent.match(/<guid>([^<]*)<\/guid>/);
+    const titleMatch = itemContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const descriptionMatch = itemContent.match(/<description[^>]*>([\s\S]*?)<\/description>/i);
+    const linkMatch = itemContent.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
+    const pubDateMatch = itemContent.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
+    const guidMatch = itemContent.match(/<guid[^>]*>([\s\S]*?)<\/guid>/i);
 
-    const title = titleMatch ? titleMatch[1].trim() : "";
-    const description = descriptionMatch ? descriptionMatch[1].trim() : "";
-    const link = linkMatch ? linkMatch[1].trim() : "";
-    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : "";
-    const guid = guidMatch ? guidMatch[1].trim() : link;
+    const title = decodeXmlValue(titleMatch ? titleMatch[1] : "");
+    const description = decodeXmlValue(descriptionMatch ? descriptionMatch[1] : "");
+    const link = decodeXmlValue(linkMatch ? linkMatch[1] : "");
+    const pubDate = decodeXmlValue(pubDateMatch ? pubDateMatch[1] : "");
+    const guid = decodeXmlValue(guidMatch ? guidMatch[1] : link);
 
     const publishedAt = pubDate ? Math.round(new Date(pubDate).getTime() / 1000) : Math.round(Date.now() / 1000);
 
@@ -180,6 +219,24 @@ function createEventId(url, title) {
   return `${url}::${title}`;
 }
 
+function normalizeEvent(event) {
+  const publishedAt = Number.isFinite(Number(event.published_at))
+    ? Math.floor(Number(event.published_at))
+    : Math.round(Date.now() / 1000);
+
+  return {
+    ...event,
+    title: String(event.title ?? "").slice(0, 500),
+    description: String(event.description ?? "").slice(0, 8000),
+    url: String(event.url ?? "").slice(0, 2000),
+    source: String(event.source ?? "").slice(0, 100),
+    category: String(event.category ?? "tech").slice(0, 50),
+    published_at: publishedAt,
+    fetched_at: Math.round(Date.now() / 1000),
+    created_at: Math.round(Date.now() / 1000),
+  };
+}
+
 async function saveEvent(env, event) {
   await env.RSS_DB.prepare(
     `INSERT OR REPLACE INTO events (id, title, description, url, source, category, published_at, fetched_at, score, cross_sources, created_at)
@@ -202,27 +259,27 @@ async function saveEvent(env, event) {
 }
 
 async function cacheHotEvent(env, event) {
+  if (!env.HOT_EVENTS) return;
   const ttl = Number(env.HOT_EVENT_TTL_SECONDS) || 300;
   await env.HOT_EVENTS.put(`event:hot:${event.id}`, JSON.stringify(event), { expirationTtl: ttl });
 }
 
 async function getCachedFeed(env, key) {
-  return env.FEED_CACHE.get(key);
+  return env.FEED_CACHE ? env.FEED_CACHE.get(key) : null;
 }
 
 async function cacheFeed(env, key, content, ttlSeconds) {
+  if (!env.FEED_CACHE) return;
   await env.FEED_CACHE.put(key, content, { expirationTtl: ttlSeconds });
 }
 
 async function isDuplicate(env, id) {
-  const key = `dedup:${id}`;
-  const value = await env.DEDUP.get(key);
-  return value !== null;
+  const row = await env.RSS_DB.prepare("SELECT 1 FROM events WHERE id = ? LIMIT 1").bind(id).first();
+  return row !== null;
 }
 
 async function markDuplicate(env, id) {
-  const ttl = Number(env.DUPLICATE_TTL_SECONDS) || 604800;
-  await env.DEDUP.put(`dedup:${id}`, "1", { expirationTtl: ttl });
+  return;
 }
 
 async function runFetchPipeline(env) {
@@ -231,20 +288,26 @@ async function runFetchPipeline(env) {
   for (const feed of FEEDS) {
     try {
       const response = await fetch(feed.url, {
-        headers: { Accept: "application/rss+xml, application/xml, text/xml" },
+        headers: {
+          Accept: "application/rss+xml, application/xml, text/xml",
+          "User-Agent": "Mozilla/5.0 (compatible; RSS-Feed-Worker/1.0)",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
       });
       if (!response.ok) continue;
       const xmlText = await response.text();
       const parsed = parseRssXml(xmlText);
 
       const events = parsed
-        .filter((item) => item.title && item.url && item.description)
-        .map((item) => ({
-          ...item,
-          source: feed.source,
-          category: feed.category,
-          id: item.id || createEventId(item.url, item.title),
-        }));
+        .filter((item) => item.title && item.url)
+        .map((item) =>
+          normalizeEvent({
+            ...item,
+            source: feed.source,
+            category: feed.category,
+            id: item.id || createEventId(item.url, item.title),
+          })
+        );
 
       collected.push(...events);
     } catch (error) {
@@ -276,13 +339,17 @@ async function runFetchPipeline(env) {
 
   const saved = [];
   for (const event of deduped) {
-    if (await isDuplicate(env, event.id)) continue;
-    await markDuplicate(env, event.id);
-    await saveEvent(env, event);
-    if (shouldPublish(event.score)) {
-      await cacheHotEvent(env, event);
+    try {
+      if (await isDuplicate(env, event.id)) continue;
+      await markDuplicate(env, event.id);
+      await saveEvent(env, event);
+      if (shouldPublish(event.score)) {
+        await cacheHotEvent(env, event);
+      }
+      saved.push(event);
+    } catch (error) {
+      console.error(`Failed to persist event ${event.id}`, error);
     }
-    saved.push(event);
   }
 
   return saved;
@@ -327,6 +394,13 @@ async function handleEventsRequest(request, env) {
   });
 }
 
+async function handleRunRequest(env) {
+  const saved = await runFetchPipeline(env);
+  return new Response(JSON.stringify({ ok: true, count: saved.length, items: saved.slice(0, 5) }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 async function handleRssRequest(request, env) {
   const url = new URL(request.url);
   const category = url.searchParams.get("category") || undefined;
@@ -350,6 +424,7 @@ async function handleRequest(request, env) {
   const url = new URL(request.url);
   if (url.pathname === "/events") return handleEventsRequest(request, env);
   if (url.pathname === "/rss") return handleRssRequest(request, env);
+  if (url.pathname === "/run") return handleRunRequest(env);
   return new Response("Not found", { status: 404 });
 }
 
