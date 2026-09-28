@@ -1,26 +1,22 @@
 name = "rss-feed-ai-intelligence"
-main = "src/index.js"
+main = "src/index.ts"
 compatibility_date = "2025-12-01"
 
 [[d1_databases]]
 binding = "RSS_DB"
 database_name = "rss_feed_db"
-database_id = "9854adf7-7378-4194-ad08-658ae16d9c6e"
-
-[[kv_namespaces]]
-binding = "DEDUP"
-id = "5858097728384f89af19ad270087dc8a"
+database_id = "PASTE_YOUR_D1_DATABASE_ID"
 
 [[kv_namespaces]]
 binding = "HOT_EVENTS"
-id = "0420368d7130481fabc7c491ecadc185"
+id = "PASTE_YOUR_HOT_EVENTS_KV_NAMESPACE_ID"
 
 [[kv_namespaces]]
 binding = "FEED_CACHE"
-id = "86d614a0a7b24de6b246b8eb49b88f9b"
+id = "PASTE_YOUR_FEED_CACHE_KV_NAMESPACE_ID"
 
-[[triggers.crons]]
-schedule = "0,30 * * * *"
+[triggers]
+crons = ["0,30 * * * *"]
 
 [vars]
 DEFAULT_FEED_TTL_SECONDS = "1800"

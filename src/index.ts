@@ -14,7 +14,6 @@ export interface EventRecord {
 
 export interface Environment {
   RSS_DB: D1Database;
-  DEDUP?: KVNamespace;
   HOT_EVENTS?: KVNamespace;
   FEED_CACHE?: KVNamespace;
   DEFAULT_FEED_TTL_SECONDS: string;
